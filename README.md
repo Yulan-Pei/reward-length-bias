@@ -30,12 +30,12 @@ python run_transformer_pipeline.py
 python compare_models.py
 ```
 
-在本机 Anaconda/Windows 上若 Transformers 误加载 TensorFlow，可先在 PowerShell 执行：
+在 Windows PowerShell 中，若 Transformers 误加载 TensorFlow，可显式关闭 TensorFlow 后端：
 
 ```powershell
 $env:USE_TF='0'
-& 'D:/anaconda_test/python.exe' run_transformer_pipeline.py
-& 'D:/anaconda_test/python.exe' compare_models.py
+python run_transformer_pipeline.py
+python compare_models.py
 ```
 
 首次运行会下载 HH-RLHF 和 `sentence-transformers/all-MiniLM-L6-v2`；之后复用 `data/` 中的本地数据与嵌入缓存。`data/` 不提交到 Git。
@@ -49,7 +49,6 @@ $env:USE_TF='0'
 | 两个模型的配对显著性比较 | [`reports/model_comparison/report.md`](reports/model_comparison/report.md) |
 | 基础实验主程序 | [`real_data_experiment.py`](real_data_experiment.py) |
 | Transformer 主程序 | [`transformer_experiment.py`](transformer_experiment.py) |
-| 完整的新手教程与面试问答 | [`docs/BEGINNER_GUIDE.md`](docs/BEGINNER_GUIDE.md) |
 
 核心评分形式为 `margin = r(chosen) - r(rejected)`，训练目标是 Bradley-Terry pairwise loss：
 
@@ -70,7 +69,7 @@ adjusted_margin = content_margin + alpha * normalized_length_difference
 数据来自论文 [Training a Helpful and Harmless Assistant with Reinforcement Learning from Human Feedback](https://arxiv.org/abs/2204.05862) 发布的 [Anthropic HH-RLHF](https://huggingface.co/datasets/Anthropic/hh-rlhf)。流水线校验源文件 SHA-256，固定数据划分；验证集只用于选择超参数，测试集只做最终报告。
 
 ```bash
-pytest
+python -m pytest
 python -B run.py
 ```
 
@@ -87,10 +86,10 @@ run_pipeline.py             基础流水线入口
 run_transformer_pipeline.py Transformer 流水线入口
 tests/                      单元测试
 reports/                    可复现结果与图表
-docs/BEGINNER_GUIDE.md      从零解释代码、结果和面试回答
 run.py                      早期 micrograd 合成机制实验
 ```
 
 ## 代码来源与许可
 
 本项目实验代码使用 MIT License。`micrograd/` 是 Andrej Karpathy 的 micrograd 快照（版本 `7bc720e`），其原始许可单独保存在 [`MICROGRAD-LICENSE.txt`](MICROGRAD-LICENSE.txt)。
+
