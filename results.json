@@ -1,0 +1,91 @@
+{
+  "python": "3.8.2",
+  "platform": "Windows-10-10.0.26100-SP0",
+  "seconds": 0.176,
+  "models": {
+    "length_only": {
+      "weights": [
+        1,
+        0
+      ],
+      "slices": {
+        "all": {
+          "n": 160,
+          "accuracy": 0.5
+        },
+        "entity_swap": {
+          "n": 40,
+          "accuracy": 0.575
+        },
+        "chosen_long": {
+          "n": 80,
+          "accuracy": 1.0
+        },
+        "unsupported": {
+          "n": 120,
+          "accuracy": 0.475
+        },
+        "rejected_long": {
+          "n": 80,
+          "accuracy": 0.0
+        }
+      }
+    },
+    "biased": {
+      "weights": [
+        1.9518118133422753,
+        2.93792790743196
+      ],
+      "slices": {
+        "all": {
+          "n": 160,
+          "accuracy": 0.8938
+        },
+        "entity_swap": {
+          "n": 40,
+          "accuracy": 0.575
+        },
+        "chosen_long": {
+          "n": 80,
+          "accuracy": 1.0
+        },
+        "unsupported": {
+          "n": 120,
+          "accuracy": 1.0
+        },
+        "rejected_long": {
+          "n": 80,
+          "accuracy": 0.7875
+        }
+      }
+    },
+    "balanced": {
+      "weights": [
+        0.04649837901893688,
+        3.938572273362435
+      ],
+      "slices": {
+        "all": {
+          "n": 160,
+          "accuracy": 0.8938
+        },
+        "entity_swap": {
+          "n": 40,
+          "accuracy": 0.575
+        },
+        "chosen_long": {
+          "n": 80,
+          "accuracy": 1.0
+        },
+        "unsupported": {
+          "n": 120,
+          "accuracy": 1.0
+        },
+        "rejected_long": {
+          "n": 80,
+          "accuracy": 0.7875
+        }
+      }
+    }
+  }
+}
