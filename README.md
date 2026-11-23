@@ -2,6 +2,35 @@
 
 给定两条订单记录、一个指定订单和两个候选回答，训练打分器选出状态正确的回答。模型是从零学习两个系数的线性排序器。训练数据来自程序生成的标签，结论限于这组中文模板。
 
+本仓库同时包含一个基于真实人类偏好数据的扩展实验。扩展实验使用论文
+[Training a Helpful and Harmless Assistant with Reinforcement Learning from Human Feedback](https://arxiv.org/abs/2204.05862)
+发布的 [Anthropic HH-RLHF](https://huggingface.co/datasets/Anthropic/hh-rlhf) `helpful-base` 数据。
+
+## 真实偏好数据扩展
+
+安装 NumPy 后运行一条命令：
+
+```bash
+python -m pip install -r requirements.txt
+python run_pipeline.py
+```
+
+流水线会校验数据文件 SHA-256，然后依次完成：
+
+```text
+官方数据下载 → 固定划分 → TF-IDF 特征 → 线性/MLP 奖励模型
+→ 固定长度系数扫描 → 长度平衡重采样 → JSON 与 Markdown 报告
+```
+
+原始数据保存在被 Git 忽略的 `data/`。实验产物位于：
+
+- [`reports/hh_rlhf/report.md`](reports/hh_rlhf/report.md)
+- [`reports/hh_rlhf/results.json`](reports/hh_rlhf/results.json)
+- [`reports/hh_rlhf/length_sweep.svg`](reports/hh_rlhf/length_sweep.svg)
+
+默认实验使用 8,000 个训练偏好对、2,000 个验证偏好对和完整的 2,354 个测试偏好对。
+验证集用于选择校准系数，测试集仅用于最终报告。固定系数扫描显式覆盖负值、零和正值。
+
 ## 复现与代码走读
 
 在本目录运行 `python -B run.py`。仅需 Python 3.8+，实测环境为 Windows、Python 3.8.2、CPU。源码已包含 micrograd，无需下载模型。每次运行会重新生成本目录的三份 JSONL 和 results.json。
