@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reward-length-bias"
+version = "0.2.0"
+description = "Reproducible CPU experiments for diagnosing length shortcuts in pairwise reward models"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+authors = [{name = "Yulan-Pei"}]
+dependencies = ["numpy==1.26.4"]
+
+[project.optional-dependencies]
+transformer = [
+  "sentence-transformers==3.4.1",
+  "torch==2.6.0",
+  "transformers==4.48.3",
+]
+dev = ["pytest==7.4.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

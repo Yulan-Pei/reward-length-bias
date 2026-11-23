@@ -20,6 +20,7 @@ import numpy as np
 
 TOKEN_PATTERN = re.compile(r"[a-z]+(?:'[a-z]+)?|\d+", re.IGNORECASE)
 ALPHAS = [-2.0, -1.0, -0.5, -0.25, 0.0, 0.25, 0.5, 1.0, 2.0]
+SEEDS = [11, 22, 33, 44, 55]
 
 
 def load_pairs(path: Path) -> list[dict[str, str]]:
@@ -209,6 +210,47 @@ def metrics(margins: np.ndarray, raw_length: np.ndarray) -> dict[str, float | in
     return result
 
 
+def bootstrap_interval(margins: np.ndarray, seed: int, repetitions=3000):
+    rng = np.random.default_rng(seed)
+    values = np.empty(repetitions, dtype=np.float32)
+    for index in range(repetitions):
+        sample = rng.integers(0, len(margins), len(margins))
+        values[index] = accuracy(margins[sample])
+    return [round(float(value), 4) for value in np.quantile(values, [0.025, 0.975])]
+
+
+def paired_bootstrap_delta(first: np.ndarray, second: np.ndarray, seed: int, repetitions=3000):
+    rng = np.random.default_rng(seed)
+    values = np.empty(repetitions, dtype=np.float32)
+    for index in range(repetitions):
+        sample = rng.integers(0, len(first), len(first))
+        values[index] = accuracy(first[sample]) - accuracy(second[sample])
+    return [round(float(value), 4) for value in np.quantile(values, [0.025, 0.975])]
+
+
+def length_gap_bins(margins: np.ndarray, raw_length: np.ndarray):
+    boundaries = [(0, 50), (50, 150), (150, 300), (300, float("inf"))]
+    rows = []
+    absolute_gap = np.abs(raw_length)
+    for lower, upper in boundaries:
+        selected = (absolute_gap >= lower) & (absolute_gap < upper)
+        rows.append({
+            "gap": f"{lower}-{upper if math.isfinite(upper) else 'inf'}",
+            "n": int(selected.sum()),
+            "accuracy": round(accuracy(margins[selected]), 4),
+            "chosen_long_rate": round(float((raw_length[selected] > 0).mean()), 4),
+        })
+    return rows
+
+
+def seed_summary(values):
+    return {
+        "mean": round(float(np.mean(values)), 4),
+        "std": round(float(np.std(values, ddof=1)), 4),
+        "values": [round(float(value), 4) for value in values],
+    }
+
+
 def render_report(summary: dict) -> str:
     rows = []
     for experiment in summary["fixed_length_sweep"]:
@@ -237,6 +279,12 @@ def render_report(summary: dict) -> str:
             f"{test['rejected_long_accuracy']:.4f} | {test['length_slice_gap']:.4f} | "
             f"{test['longer_selected_rate']:.4f} |"
         )
+
+    bins = summary["content_only"]["length_gap_bins"]
+    bin_rows = [
+        f"| {row['gap']} | {row['n']} | {row['chosen_long_rate']:.4f} | {row['accuracy']:.4f} |"
+        for row in bins
+    ]
 
     return "\n".join([
         "# HH-RLHF 长度偏差实验报告",
@@ -270,6 +318,18 @@ def render_report(summary: dict) -> str:
         "| Model | Accuracy | Chosen-long acc | Rejected-long acc | Slice gap | Longer selected |",
         "|---|---:|---:|---:|---:|---:|",
         *content_rows,
+        "",
+        f"TF-IDF 五次种子测试准确率：**{summary['content_only']['five_seed_accuracy']['mean']:.4f} ± {summary['content_only']['five_seed_accuracy']['std']:.4f}**",
+        "",
+        f"TF-IDF ensemble bootstrap 95% CI：**{summary['content_only']['accuracy_ci_95']}**",
+        "",
+        f"验证集选择的 alpha 相对 alpha=0 的测试变化：**{summary['selected_vs_zero']['delta']:+.4f}**，paired bootstrap 95% CI：**{summary['selected_vs_zero']['delta_ci_95']}**",
+        "",
+        "## 长度差分桶",
+        "",
+        "| 字符长度差绝对值 | 样本数 | chosen 更长比例 | Accuracy |",
+        "|---|---:|---:|---:|",
+        *bin_rows,
         "",
         "## 学习长度系数与重采样",
         "",
@@ -370,9 +430,19 @@ def main():
         test_rows, vocabulary, idf, length_scale
     )
 
-    content_weights, content_losses = train_pairwise(train_x, args.seed)
-    val_content = val_x @ content_weights
-    test_content = test_x @ content_weights
+    validation_margins = []
+    test_margins = []
+    seed_accuracies = []
+    content_losses = None
+    for seed in SEEDS:
+        content_weights, losses = train_pairwise(train_x, seed)
+        validation_margins.append(val_x @ content_weights)
+        margin = test_x @ content_weights
+        test_margins.append(margin)
+        seed_accuracies.append(accuracy(margin))
+        content_losses = losses
+    val_content = np.mean(validation_margins, axis=0)
+    test_content = np.mean(test_margins, axis=0)
 
     sweep = []
     for alpha in ALPHAS:
@@ -389,6 +459,7 @@ def main():
             -abs(item["alpha"]),
         ),
     )["alpha"]
+    selected_test = test_content + selected * test_z
 
     joint_features = np.column_stack([train_x, train_z])
     joint_weights, joint_losses = train_pairwise(joint_features, args.seed)
@@ -420,8 +491,11 @@ def main():
         },
         "content_only": {
             "final_train_loss": round(content_losses[-1], 6),
+            "five_seed_accuracy": seed_summary(seed_accuracies),
+            "accuracy_ci_95": bootstrap_interval(test_content, args.seed),
             "validation": metrics(val_content, val_raw),
             "test": metrics(test_content, test_raw),
+            "length_gap_bins": length_gap_bins(test_content, test_raw),
         },
         "mlp_content_only": {
             "hidden_size": len(mlp_parameters[-1]),
@@ -431,6 +505,10 @@ def main():
         },
         "fixed_length_sweep": sweep,
         "selected_alpha": selected,
+        "selected_vs_zero": {
+            "delta": round(accuracy(selected_test) - accuracy(test_content), 4),
+            "delta_ci_95": paired_bootstrap_delta(selected_test, test_content, args.seed),
+        },
         "learned_models": {
             "joint": learned_result(joint_weights, joint_losses),
             "balanced_resampling": learned_result(balanced_weights, balanced_losses),
@@ -451,4 +529,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

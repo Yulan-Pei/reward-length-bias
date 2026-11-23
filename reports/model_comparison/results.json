@@ -1,0 +1,26 @@
+{
+  "n": 2354,
+  "tfidf_accuracy": 0.6032,
+  "tfidf_ci_95": [
+    0.5824,
+    0.6226
+  ],
+  "minilm_accuracy": 0.6223,
+  "minilm_ci_95": [
+    0.6032,
+    0.641
+  ],
+  "minilm_minus_tfidf": 0.0191,
+  "paired_delta_ci_95": [
+    -0.0034,
+    0.0423
+  ],
+  "both_correct": 1082,
+  "both_wrong": 556,
+  "mcnemar": {
+    "tfidf_only_correct": 334,
+    "minilm_only_correct": 382,
+    "discordant": 716,
+    "two_sided_exact_p": 0.07893500766027879
+  }
+}
