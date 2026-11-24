@@ -1494,5 +1494,51 @@
     "repetitions": 5000,
     "seed": 42
   },
-  "runtime_seconds": 59.723940500000026
+  "hierarchical_comparison_bt_vs_full_pl": {
+    "direction": "second_minus_first",
+    "resampling_units": [
+      "optimization_seed",
+      "prompt"
+    ],
+    "delta": {
+      "top1_accuracy": {
+        "estimate": 0.0030000000000000027,
+        "ci_95": [
+          -0.012000000104308128,
+          0.01600000075995922
+        ]
+      },
+      "pairwise_accuracy": {
+        "estimate": -0.003238095238095484,
+        "ci_95": [
+          -0.006619047839194536,
+          4.761904710903764e-05
+        ]
+      },
+      "ndcg_at_7": {
+        "estimate": -0.0007802844047546387,
+        "ci_95": [
+          -0.004327395558357238,
+          0.0027072891592979415
+        ]
+      },
+      "reward_length_correlation": {
+        "estimate": -0.017770498991012573,
+        "ci_95": [
+          -0.02144404947757721,
+          -0.014156726747751237
+        ]
+      },
+      "longest_selected_rate": {
+        "estimate": -0.01100000000000001,
+        "ci_95": [
+          -0.02500000037252903,
+          0.003000000026077032
+        ]
+      }
+    },
+    "repetitions": 5000,
+    "seed": 43
+  },
+  "runtime_seconds": 250.32874880000008
 }
