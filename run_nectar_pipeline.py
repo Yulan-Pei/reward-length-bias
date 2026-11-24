@@ -9,6 +9,7 @@ def main() -> None:
     subprocess.run([sys.executable, "prepare_nectar.py"], check=True)
     subprocess.run([sys.executable, "nectar_listwise_experiment.py", "--local-files-only"], check=True)
     subprocess.run([sys.executable, "odin_pl_sweep.py"], check=True)
+    subprocess.run([sys.executable, "nectar_split_stability.py"], check=True)
 
 
 if __name__ == "__main__":
