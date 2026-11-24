@@ -4,6 +4,7 @@ import torch
 from nectar_listwise_experiment import (
     centered_correlation,
     group_metrics,
+    hierarchical_paired_bootstrap_comparison,
     paired_bootstrap_comparison,
     preference_loss,
 )
@@ -45,3 +46,9 @@ def test_paired_bootstrap_reports_second_minus_first():
     assert result["direction"] == "second_minus_first"
     assert result["delta"]["top1_accuracy"]["estimate"] == -1.0
     assert result["delta"]["ndcg_at_7"]["ci_95"][1] < 0
+
+    hierarchical = hierarchical_paired_bootstrap_comparison(
+        [first, first], [second, second], lengths, repetitions=100
+    )
+    assert hierarchical["resampling_units"] == ["optimization_seed", "prompt"]
+    assert hierarchical["delta"]["top1_accuracy"]["estimate"] == -1.0

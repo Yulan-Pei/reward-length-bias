@@ -253,6 +253,44 @@ def paired_bootstrap_comparison(first_scores: np.ndarray, second_scores: np.ndar
     }
 
 
+def hierarchical_paired_bootstrap_comparison(first_score_runs: list[np.ndarray],
+                                             second_score_runs: list[np.ndarray],
+                                             lengths: np.ndarray, seed: int = 43,
+                                             repetitions: int = 5000) -> dict:
+    """Paired bootstrap over both optimization seeds and prompts."""
+    first_stack = np.stack(first_score_runs)
+    second_stack = np.stack(second_score_runs)
+    metric_keys = ("top1_accuracy", "pairwise_accuracy", "ndcg_at_7",
+                   "reward_length_correlation", "longest_selected_rate")
+    first_metrics = group_metrics(first_stack.mean(axis=0), lengths)[0]
+    second_metrics = group_metrics(second_stack.mean(axis=0), lengths)[0]
+    rng = np.random.default_rng(seed)
+    samples = {key: np.empty(repetitions, dtype=np.float32) for key in metric_keys}
+    for iteration in range(repetitions):
+        seed_indices = rng.integers(0, len(first_stack), len(first_stack))
+        prompt_indices = rng.integers(0, len(lengths), len(lengths))
+        first_scores = first_stack[seed_indices].mean(axis=0)[prompt_indices]
+        second_scores = second_stack[seed_indices].mean(axis=0)[prompt_indices]
+        sampled_lengths = lengths[prompt_indices]
+        first = group_metrics(first_scores, sampled_lengths)[0]
+        second = group_metrics(second_scores, sampled_lengths)[0]
+        for key in metric_keys:
+            samples[key][iteration] = second[key] - first[key]
+    return {
+        "direction": "second_minus_first",
+        "resampling_units": ["optimization_seed", "prompt"],
+        "delta": {
+            key: {
+                "estimate": float(second_metrics[key] - first_metrics[key]),
+                "ci_95": [float(value) for value in np.quantile(samples[key], [0.025, 0.975])],
+            }
+            for key in metric_keys
+        },
+        "repetitions": repetitions,
+        "seed": seed,
+    }
+
+
 def summarize_runs(runs: list[dict]) -> dict:
     summary = {}
     for key in runs[0]["metrics"]:
@@ -261,7 +299,8 @@ def summarize_runs(runs: list[dict]) -> dict:
     return summary
 
 
-def render_report(result: dict) -> str:
+def render_report(result: dict, split_stability: dict | None = None,
+                  odin_sweep: dict | None = None) -> str:
     rows = []
     slice_rows = []
     for method in result["methods"]:
@@ -278,6 +317,7 @@ def render_report(result: dict) -> str:
             f"{summary['top1_when_best_not_longest']['mean']:.4f} | {summary['conditional_top1_gap']['mean']:+.4f} |"
         )
     comparison = result["paired_comparison_bt_vs_full_pl"]
+    hierarchical = result["hierarchical_comparison_bt_vs_full_pl"]
     comparison_rows = []
     for key, label in (("top1_accuracy", "Top-1"), ("pairwise_accuracy", "Pairwise"),
                        ("ndcg_at_7", "NDCG@7"),
@@ -285,8 +325,39 @@ def render_report(result: dict) -> str:
                        ("longest_selected_rate", "Longest selected")):
         item = comparison["delta"][key]
         comparison_rows.append(
-            f"| {label} | {item['estimate']:+.4f} | [{item['ci_95'][0]:+.4f}, {item['ci_95'][1]:+.4f}] |"
+            f"| {label} | {item['estimate']:+.4f} | [{item['ci_95'][0]:+.4f}, {item['ci_95'][1]:+.4f}] | "
+            f"[{hierarchical['delta'][key]['ci_95'][0]:+.4f}, {hierarchical['delta'][key]['ci_95'][1]:+.4f}] |"
         )
+    sensitivity_lines = []
+    if split_stability is not None:
+        bt_split = next(method for method in split_stability["methods"]
+                        if method["loss"] == "pairwise_bt" and not method["odin"])
+        original_bt = next(method for method in result["methods"]
+                           if method["loss"] == "pairwise_bt" and not method["odin"])
+        original_mean = original_bt["summary"]["top1_accuracy"]["mean"]
+        optimization_std = original_bt["summary"]["top1_accuracy"]["std"]
+        split_mean = bt_split["summary"]["top1_accuracy"]["mean"]
+        split_std = bt_split["summary"]["top1_accuracy"]["std_across_splits"]
+        sensitivity_lines = [
+            "## 数据划分敏感性", "",
+            f"原始固定划分的 BT Top-1 为 **{original_mean:.4f}**，高于三个重新划分的均值 "
+            f"**{split_mean:.4f}** 共 **{(original_mean - split_mean) * 100:.1f} 个百分点**。",
+            f"原始划分上的优化 seed SD 为 **{optimization_std:.4f}**，而跨数据划分 SD 为 "
+            f"**{split_std:.4f}**，后者约为前者的 **{split_std / optimization_std:.1f} 倍**。",
+            "因此 0.3890 应视为一个偏乐观的单划分 headline，而不是总体性能的无偏估计；完整稳定性结果见 `split_stability.md`。",
+            "这里仅有三个重新划分且都来自同一个 5,000 组池，因此仍不能替代外部数据复核。", "",
+        ]
+    odin_lines = []
+    if odin_sweep is not None:
+        selected = odin_sweep["selection"]["selected"]
+        odin_lines = [
+            "## ODIN 强度口径", "",
+            "主表的 ODIN-Q 使用论文强度 **λ=1**，用于检验能否直接迁移；它使 BT Top-1 "
+            "从 0.3890 降到 0.3046。`odin_sweep.md` 与 `split_stability.md` 使用验证集选出的轻量强度：",
+            f"BT={selected['pairwise_bt']}, Top-1 PL={selected['top1_pl']}, Full PL={selected['full_pl']}。",
+            "BT 的 tuned λ 比 1 小 1000 倍，Top-1 PL 小 200 倍，所以 tuned ODIN 在重新划分中"
+            "从 0.3680 到 0.3729，与 λ=1 的大幅下降并不矛盾；它们是两个不同正则制度。", "",
+        ]
     return "\n".join([
         "# Nectar 七候选排序与长度偏差实验", "",
         "在同一固定 MiniLM 表示、同一数据划分和同一优化器下，比较 pairwise Bradley–Terry、",
@@ -316,7 +387,13 @@ def render_report(result: dict) -> str:
         "因为两个切片没有随机分配且可能包含不同题型/难度；严格因果结论仍需要长度反事实。", "",
         "## BT vs Full PL：prompt-level 配对 bootstrap", "",
         "下表使用五个 seed 的平均分数，在同一批 1,000 个 prompt 上有放回重采样；差值为 Full PL − BT。", "",
-        "| Metric | Delta | Paired bootstrap 95% CI |", "|---|---:|---:|", *comparison_rows, "",
+        "| Metric | Delta | Prompt-only 95% CI | Seed + prompt 95% CI |",
+        "|---|---:|---:|---:|", *comparison_rows, "",
+        "Prompt-only 区间先对五个 seed 的分数求平均，再按 prompt 重采样，只反映测试 prompt 抽样不确定性。",
+        "Seed + prompt 区间在每次 bootstrap 中同时有放回重采样五个优化 seed 与 1,000 个 prompt，",
+        "因此额外纳入有限优化 seed 带来的方差；两者都不覆盖数据划分方差，后者单独见下一节。", "",
+        *sensitivity_lines,
+        *odin_lines,
         "## 解释边界", "",
         "这是 CPU 可运行的机制对照：MiniLM 编码器被冻结，只训练线性 reward head。",
         "ODIN 部分是把论文的双头、相关性约束和正交约束推广到 K-wise PL，",
@@ -346,7 +423,18 @@ def main() -> None:
     parser.add_argument("--lambda-length", type=float, default=1.0)
     parser.add_argument("--lambda-orthogonal", type=float, default=1.0)
     parser.add_argument("--local-files-only", action="store_true")
+    parser.add_argument("--render-only", action="store_true")
     args = parser.parse_args()
+    split_path = args.out / "split_stability.json"
+    odin_path = args.out / "odin_sweep.json"
+    if args.render_only:
+        result = json.loads((args.out / "results.json").read_text(encoding="utf-8"))
+        split_result = json.loads(split_path.read_text(encoding="utf-8")) if split_path.exists() else None
+        odin_result = json.loads(odin_path.read_text(encoding="utf-8")) if odin_path.exists() else None
+        (args.out / "report.md").write_text(
+            render_report(result, split_result, odin_result), encoding="utf-8"
+        )
+        return
     start = time.perf_counter()
     rows = load_rows(args.data)
     splits = split_rows(rows, args.train_size, args.val_size, args.test_size, args.split_seed)
@@ -385,6 +473,9 @@ def main() -> None:
     bt_scores = np.mean(score_runs[("pairwise_bt", False)], axis=0)
     full_pl_scores = np.mean(score_runs[("full_pl", False)], axis=0)
     paired_comparison = paired_bootstrap_comparison(bt_scores, full_pl_scores, test_lengths)
+    hierarchical_comparison = hierarchical_paired_bootstrap_comparison(
+        score_runs[("pairwise_bt", False)], score_runs[("full_pl", False)], test_lengths
+    )
 
     best_is_longest = np.argmax(test_lengths, axis=1) == 0
     result = {
@@ -400,11 +491,16 @@ def main() -> None:
                      "lambda_orthogonal": args.lambda_orthogonal},
         "methods": methods,
         "paired_comparison_bt_vs_full_pl": paired_comparison,
+        "hierarchical_comparison_bt_vs_full_pl": hierarchical_comparison,
         "runtime_seconds": time.perf_counter() - start,
     }
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "results.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-    (args.out / "report.md").write_text(render_report(result), encoding="utf-8")
+    split_result = json.loads(split_path.read_text(encoding="utf-8")) if split_path.exists() else None
+    odin_result = json.loads(odin_path.read_text(encoding="utf-8")) if odin_path.exists() else None
+    (args.out / "report.md").write_text(
+        render_report(result, split_result, odin_result), encoding="utf-8"
+    )
     print(f"wrote {args.out / 'results.json'} and {args.out / 'report.md'}")
 
 

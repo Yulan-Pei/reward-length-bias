@@ -21,7 +21,7 @@ def summarize(values):
             "split_values": [float(value) for value in values]}
 
 
-def render_report(result):
+def render_report(result, baseline):
     rows = []
     for method in result["methods"]:
         metrics = method["summary"]
@@ -32,6 +32,14 @@ def render_report(result):
             f"{metrics['reward_length_correlation']['mean']:+.4f} ± {metrics['reward_length_correlation']['std_across_splits']:.4f} | "
             f"{metrics['conditional_top1_gap']['mean']:+.4f} ± {metrics['conditional_top1_gap']['std_across_splits']:.4f} |"
         )
+    original_bt = next(method for method in baseline["methods"]
+                       if method["loss"] == "pairwise_bt" and not method["odin"])
+    split_bt = next(method for method in result["methods"]
+                    if method["loss"] == "pairwise_bt" and not method["odin"])
+    original_mean = original_bt["summary"]["top1_accuracy"]["mean"]
+    original_std = original_bt["summary"]["top1_accuracy"]["std"]
+    split_mean = split_bt["summary"]["top1_accuracy"]["mean"]
+    split_std = split_bt["summary"]["top1_accuracy"]["std_across_splits"]
     return "\n".join([
         "# Nectar 三数据划分稳定性", "",
         "将缓存中的 5,000 个七候选 prompt 重新随机划分三次；每个划分使用 3,000/1,000/1,000",
@@ -39,8 +47,13 @@ def render_report(result):
         "再报告三个划分均值 ± 划分间标准差。", "",
         "| Loss | Head | Top-1 | NDCG@7 | Reward-length r | Conditional gap |",
         "|---|---|---:|---:|---:|---:|", *rows, "",
+        f"原始固定划分的 BT Top-1 {original_mean:.4f} 比三次重新划分均值 {split_mean:.4f} 高 "
+        f"{(original_mean - split_mean) * 100:.1f} 个百分点。跨划分 SD {split_std:.4f} 是原始划分"
+        f"优化 seed SD {original_std:.4f} 的 {split_std / original_std:.1f} 倍，说明数据划分方差是更大的不确定性来源。", "",
         "tuned ODIN 的 λ 固定为原始验证集选出的 0.001/0.005/0.001，而没有在每个新划分上重新选参。",
         "因此该实验检验已选超参数跨划分迁移是否稳定，不是三次独立的嵌套超参数搜索。", "",
+        "这里的 ODIN 是 tuned 小 λ：BT/Full PL 为 0.001，Top-1 PL 为 0.005。主报告中 Top-1",
+        "从 0.3890 降至 0.3046 的结果使用 λ=1；两个结果属于不同正则强度，不是复现实验互相矛盾。", "",
         "三个划分仍来自同一个 5,000 组样本池，不能替代新的外部数据集；但它比只改变模型初始化",
         "更直接地覆盖了数据抽样不确定性。",
     ])
@@ -50,7 +63,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache", type=Path, default=Path("data/embeddings/minilm_nectar_7way.npz"))
     parser.add_argument("--out", type=Path, default=Path("reports/nectar_listwise"))
+    parser.add_argument("--baseline", type=Path, default=Path("reports/nectar_listwise/results.json"))
+    parser.add_argument("--render-only", action="store_true")
     args = parser.parse_args()
+    if args.render_only:
+        result = json.loads((args.out / "split_stability.json").read_text(encoding="utf-8"))
+        baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
+        (args.out / "split_stability.md").write_text(render_report(result, baseline), encoding="utf-8")
+        return
     start = time.perf_counter()
     cached = np.load(args.cache)
     embeddings = np.concatenate([cached[f"{name}_embeddings"] for name in ("train", "validation", "test")])
@@ -95,7 +115,8 @@ def main():
     }
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "split_stability.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-    (args.out / "split_stability.md").write_text(render_report(result), encoding="utf-8")
+    baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
+    (args.out / "split_stability.md").write_text(render_report(result, baseline), encoding="utf-8")
 
 
 if __name__ == "__main__":
