@@ -13,7 +13,6 @@ os.environ.setdefault("USE_TF", "0")
 import numpy as np
 import torch
 import torch.nn.functional as F
-from sentence_transformers import SentenceTransformer
 
 
 LOSSES = ("pairwise_bt", "top1_pl", "full_pl")
@@ -253,6 +252,8 @@ def render_report(result: dict) -> str:
 
 
 def main() -> None:
+    from sentence_transformers import SentenceTransformer
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=Path, default=Path("data/nectar/nectar_7way.jsonl"))
     parser.add_argument("--out", type=Path, default=Path("reports/nectar_listwise"))
