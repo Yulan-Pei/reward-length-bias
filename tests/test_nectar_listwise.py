@@ -1,7 +1,12 @@
 import numpy as np
 import torch
 
-from nectar_listwise_experiment import centered_correlation, group_metrics, preference_loss
+from nectar_listwise_experiment import (
+    centered_correlation,
+    group_metrics,
+    paired_bootstrap_comparison,
+    preference_loss,
+)
 
 
 def test_two_candidate_pl_equals_bradley_terry():
@@ -30,3 +35,13 @@ def test_perfect_ranking_metrics_are_one():
     assert metrics["top1_accuracy"] == 1.0
     assert metrics["pairwise_accuracy"] == 1.0
     assert np.isclose(metrics["ndcg_at_7"], 1.0)
+
+
+def test_paired_bootstrap_reports_second_minus_first():
+    first = np.tile(np.arange(7, 0, -1, dtype=np.float32), (20, 1))
+    second = np.flip(first, axis=1).copy()
+    lengths = np.tile(np.array([3, 7, 2, 6, 1, 5, 4], dtype=np.float32), (20, 1))
+    result = paired_bootstrap_comparison(first, second, lengths, repetitions=100)
+    assert result["direction"] == "second_minus_first"
+    assert result["delta"]["top1_accuracy"]["estimate"] == -1.0
+    assert result["delta"]["ndcg_at_7"]["ci_95"][1] < 0

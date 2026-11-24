@@ -31,7 +31,7 @@ def fit_and_score(train_x, train_lengths, eval_x, eval_lengths, kind, seed, stre
     }
 
 
-def render_report(result):
+def render_report(result, baseline):
     lines = [
         "# ODIN × PL 正则强度消融", "",
         "ODIN 原论文使用强度 1。本实验对 CPU 线性头不直接假设该尺度可迁移，",
@@ -55,7 +55,20 @@ def render_report(result):
         lines.append(f"| {item['loss']} | {item['strength']:.3f} | {s['top1_accuracy']['mean']:.4f} | "
                      f"{s['pairwise_accuracy']['mean']:.4f} | {s['ndcg_at_7']['mean']:.4f} | "
                      f"{s['reward_length_correlation']['mean']:+.4f} | {s['longest_selected_rate']['mean']:.4f} |")
-    lines += ["", "![NDCG 与长度相关的权衡](tradeoff.svg)", "",
+    lines += ["", "## 条件切片：tuned ODIN 如何缩小 gap", "",
+              "| Loss | Head | 最佳即最长 | 最佳非最长 | Gap |",
+              "|---|---|---:|---:|---:|"]
+    baseline_single = {item["loss"]: item for item in baseline["methods"] if not item["odin"]}
+    for item in result["test"]:
+        loss, tuned = item["loss"], item["summary"]
+        base = baseline_single[loss]["summary"]
+        lines.append(f"| {loss} | single | {base['top1_when_best_longest']['mean']:.4f} | "
+                     f"{base['top1_when_best_not_longest']['mean']:.4f} | {base['conditional_top1_gap']['mean']:+.4f} |")
+        lines.append(f"| {loss} | tuned ODIN | {tuned['top1_when_best_longest']['mean']:.4f} | "
+                     f"{tuned['top1_when_best_not_longest']['mean']:.4f} | {tuned['conditional_top1_gap']['mean']:+.4f} |")
+    lines += ["", "小 λ 的 tuned ODIN 不再像 λ=1 那样完全向下拉平，但主要改善仍来自降低‘最佳即最长’切片的优势；",
+              "‘最佳非最长’切片只小幅改善。它缓和了模型依赖长度顺风局的程度，没有把困难切片变成容易切片。", "",
+              "![NDCG 与长度相关的权衡](tradeoff.svg)", "",
               "该表应与 `report.md` 中的单头基线以及 λ=1 直接迁移结果一起阅读。",
               "若 λ 的轻微变化导致指标突然恶化，应解释为当前小模型上的优化敏感性，而不是隐藏它。"]
     return "\n".join(lines)
@@ -109,7 +122,7 @@ def main():
     if args.render_only:
         result = json.loads((args.out / "odin_sweep.json").read_text(encoding="utf-8"))
         baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
-        (args.out / "odin_sweep.md").write_text(render_report(result), encoding="utf-8")
+        (args.out / "odin_sweep.md").write_text(render_report(result, baseline), encoding="utf-8")
         (args.out / "tradeoff.svg").write_text(render_tradeoff_svg(result, baseline), encoding="utf-8")
         return
     cached = np.load(args.cache)
@@ -149,8 +162,8 @@ def main():
     }
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "odin_sweep.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-    (args.out / "odin_sweep.md").write_text(render_report(result), encoding="utf-8")
     baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
+    (args.out / "odin_sweep.md").write_text(render_report(result, baseline), encoding="utf-8")
     (args.out / "tradeoff.svg").write_text(render_tradeoff_svg(result, baseline), encoding="utf-8")
     print("selected", selected)
 

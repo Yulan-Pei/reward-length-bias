@@ -12,6 +12,7 @@ Plackett–Luce、Full Plackett–Luce，以及推广到 K-wise 排序的 ODIN �
 - 平衡重采样降低了学到的长度系数，但没有消除切片差距。因此本项目的结论是“量化、诊断并比较缓解手段”，不是“解决了长度偏差”。
 - Nectar 七候选上，BT 与 Full PL 的 NDCG@7 分别为 **0.7984/0.7975**，长度相关分别为 **0.4617/0.4439**。Full PL 只带来轻微的长度相关下降，不能据此声称 PL 自动解决长度偏差。
 - ODIN 的 λ=1 直接迁移把质量头长度相关压到约 0.02–0.03，但 NDCG 降到约 0.743；验证集选择较小 λ 后，三种目标的相关下降约 14%–16%，NDCG 只下降 0.001–0.003。去偏存在明确的质量权衡，并对正则强度敏感。
+- 测试标签中，最佳回答为组内最长的比例是 **36.6%**，为随机位置基线 14.3% 的 2.56 倍。BT 在“最佳即最长/最佳非最长”切片的 Top-1 为 **53.6%/30.4%**；λ=1 ODIN 虽将差距压到约 1.8 个百分点，却主要靠把高侧降至 31.6%，没有改善低侧，属于向下拉平。
 
 实验使用 8,000/2,000/2,354 个训练、验证、测试偏好对，5 个随机种子，并输出 bootstrap 置信区间、配对检验和可复现报告。
 
@@ -60,10 +61,12 @@ python compare_models.py
 | 两个模型的配对显著性比较 | [`reports/model_comparison/report.md`](reports/model_comparison/report.md) |
 | Nectar BT / Top-1 PL / Full PL 主结果 | [`reports/nectar_listwise/report.md`](reports/nectar_listwise/report.md) |
 | ODIN × PL 验证集 λ 消融 | [`reports/nectar_listwise/odin_sweep.md`](reports/nectar_listwise/odin_sweep.md) |
+| 三个数据划分的稳定性复核 | [`reports/nectar_listwise/split_stability.md`](reports/nectar_listwise/split_stability.md) |
 | 基础实验主程序 | [`real_data_experiment.py`](real_data_experiment.py) |
 | Transformer 主程序 | [`transformer_experiment.py`](transformer_experiment.py) |
 | Nectar 数据准备与哈希 | [`prepare_nectar.py`](prepare_nectar.py) |
 | K-wise 损失与 ODIN 双头 | [`nectar_listwise_experiment.py`](nectar_listwise_experiment.py) |
+| 多数据划分稳定性实验 | [`nectar_split_stability.py`](nectar_split_stability.py) |
 
 核心评分形式为 `margin = r(chosen) - r(rejected)`，训练目标是 Bradley-Terry pairwise loss：
 
@@ -112,6 +115,7 @@ run_transformer_pipeline.py Transformer 流水线入口
 prepare_nectar.py           固定抽取并校验 Nectar 七候选数据
 nectar_listwise_experiment.py BT/Top-1 PL/Full PL 与 ODIN-Q
 odin_pl_sweep.py            验证集正则扫描与测试集复核
+nectar_split_stability.py   三个数据划分 × 三个优化 seed
 run_nectar_pipeline.py      Nectar 一键流水线
 tests/                      单元测试
 reports/                    可复现结果与图表

@@ -146,6 +146,10 @@ def group_metrics(scores: np.ndarray, lengths: np.ndarray) -> tuple[dict, dict[s
         "best_is_longest_rate": float(best_is_longest.mean()),
         "top1_when_best_longest": float(top1[best_is_longest].mean()) if best_is_longest.any() else None,
         "top1_when_best_not_longest": float(top1[~best_is_longest].mean()) if (~best_is_longest).any() else None,
+        "conditional_top1_gap": (
+            float(top1[best_is_longest].mean() - top1[~best_is_longest].mean())
+            if best_is_longest.any() and (~best_is_longest).any() else None
+        ),
     }
     per_group = {"top1": top1.astype(np.float32), "pairwise": pairwise_per_group,
                  "ndcg": ndcg, "longest_selected": length_selected.astype(np.float32)}
@@ -208,6 +212,47 @@ def bootstrap_ci(values: np.ndarray, seed: int, repetitions: int = 2000):
     return [float(x) for x in np.quantile(estimates, [0.025, 0.975])]
 
 
+def wilson_interval(successes: int, total: int, z: float = 1.96) -> list[float]:
+    proportion = successes / total
+    denominator = 1 + z * z / total
+    center = (proportion + z * z / (2 * total)) / denominator
+    radius = z * np.sqrt(proportion * (1 - proportion) / total + z * z / (4 * total * total)) / denominator
+    return [float(center - radius), float(center + radius)]
+
+
+def paired_bootstrap_comparison(first_scores: np.ndarray, second_scores: np.ndarray,
+                                lengths: np.ndarray, seed: int = 42,
+                                repetitions: int = 5000) -> dict:
+    """Prompt-level paired bootstrap; deltas are second minus first."""
+    metric_keys = ("top1_accuracy", "pairwise_accuracy", "ndcg_at_7",
+                   "reward_length_correlation", "longest_selected_rate")
+    first_metrics = group_metrics(first_scores, lengths)[0]
+    second_metrics = group_metrics(second_scores, lengths)[0]
+    observed = {key: second_metrics[key] - first_metrics[key] for key in metric_keys}
+    rng = np.random.default_rng(seed)
+    samples = {key: np.empty(repetitions, dtype=np.float32) for key in metric_keys}
+    for iteration in range(repetitions):
+        indices = rng.integers(0, len(lengths), len(lengths))
+        first = group_metrics(first_scores[indices], lengths[indices])[0]
+        second = group_metrics(second_scores[indices], lengths[indices])[0]
+        for key in metric_keys:
+            samples[key][iteration] = second[key] - first[key]
+    return {
+        "direction": "second_minus_first",
+        "first": first_metrics,
+        "second": second_metrics,
+        "delta": {
+            key: {
+                "estimate": float(observed[key]),
+                "ci_95": [float(value) for value in np.quantile(samples[key], [0.025, 0.975])],
+            }
+            for key in metric_keys
+        },
+        "repetitions": repetitions,
+        "seed": seed,
+    }
+
+
 def summarize_runs(runs: list[dict]) -> dict:
     summary = {}
     for key in runs[0]["metrics"]:
@@ -218,13 +263,29 @@ def summarize_runs(runs: list[dict]) -> dict:
 
 def render_report(result: dict) -> str:
     rows = []
+    slice_rows = []
     for method in result["methods"]:
         summary = method["summary"]
+        label = 'ODIN-Q (λ=1)' if method['odin'] else 'single'
         rows.append(
-            f"| {method['loss']} | {'ODIN-Q (λ=1)' if method['odin'] else 'single'} | "
+            f"| {method['loss']} | {label} | "
             f"{summary['top1_accuracy']['mean']:.4f} ± {summary['top1_accuracy']['std']:.4f} | "
             f"{summary['pairwise_accuracy']['mean']:.4f} | {summary['ndcg_at_7']['mean']:.4f} | "
             f"{summary['reward_length_correlation']['mean']:+.4f} | {summary['longest_selected_rate']['mean']:.4f} |"
+        )
+        slice_rows.append(
+            f"| {method['loss']} | {label} | {summary['top1_when_best_longest']['mean']:.4f} | "
+            f"{summary['top1_when_best_not_longest']['mean']:.4f} | {summary['conditional_top1_gap']['mean']:+.4f} |"
+        )
+    comparison = result["paired_comparison_bt_vs_full_pl"]
+    comparison_rows = []
+    for key, label in (("top1_accuracy", "Top-1"), ("pairwise_accuracy", "Pairwise"),
+                       ("ndcg_at_7", "NDCG@7"),
+                       ("reward_length_correlation", "Reward-length r"),
+                       ("longest_selected_rate", "Longest selected")):
+        item = comparison["delta"][key]
+        comparison_rows.append(
+            f"| {label} | {item['estimate']:+.4f} | [{item['ci_95'][0]:+.4f}, {item['ci_95'][1]:+.4f}] |"
         )
     return "\n".join([
         "# Nectar 七候选排序与长度偏差实验", "",
@@ -241,6 +302,21 @@ def render_report(result: dict) -> str:
         "|---|---|---:|---:|---:|---:|---:|", *rows, "",
         "所有均值来自五个随机种子。`Longest selected` 不是质量指标；它只度量模型是否频繁选择组内最长回答。",
         "`Reward-length r` 先在每个 prompt 内中心化，再跨样本计算 Pearson 相关，避免 prompt 间长度差异混入。", "",
+        "## 条件切片：长度是否站在标签一边", "",
+        f"测试标签中，最佳回答同时为组内最长回答的比例是 **{result['data']['best_is_longest_rate']:.4f}**；",
+        f"Wilson 95% CI 为 [{result['data']['best_is_longest_ci_95'][0]:.4f}, {result['data']['best_is_longest_ci_95'][1]:.4f}]。",
+        "随机位置基线为 1/7=0.1429。2.56 倍的富集是 GPT-4 排名与 verbosity 强关联的证据，",
+        "但最长回答可能在部分题目上确实更完整，因此它单独不能识别因果偏差。", "",
+        "| Loss | Head | Top-1：最佳即最长 | Top-1：最佳非最长 | Gap |",
+        "|---|---|---:|---:|---:|", *slice_rows, "",
+        "BT 单头在两个切片上为 0.5355/0.3044，差 23.1 个百分点。λ=1 ODIN 将 gap 压到约 1.8 个百分点，",
+        "主要方式却是把高侧从 0.5355 拉低到 0.3158；低侧只从 0.3044 变为 0.2981。",
+        "因此这是‘向下拉平’，不是把困难的最佳非最长样本做对，同时 NDCG@7 从 0.7984 降至约 0.7425。", "",
+        "该切片比单一相关系数更直接地揭示模型何时表现好，但仍是 observational conditional analysis，",
+        "因为两个切片没有随机分配且可能包含不同题型/难度；严格因果结论仍需要长度反事实。", "",
+        "## BT vs Full PL：prompt-level 配对 bootstrap", "",
+        "下表使用五个 seed 的平均分数，在同一批 1,000 个 prompt 上有放回重采样；差值为 Full PL − BT。", "",
+        "| Metric | Delta | Paired bootstrap 95% CI |", "|---|---:|---:|", *comparison_rows, "",
         "## 解释边界", "",
         "这是 CPU 可运行的机制对照：MiniLM 编码器被冻结，只训练线性 reward head。",
         "ODIN 部分是把论文的双头、相关性约束和正交约束推广到 K-wise PL，",
@@ -281,14 +357,17 @@ def main() -> None:
     test_x, test_lengths = arrays["test"]
 
     methods = []
+    score_runs = {}
     for kind in LOSSES:
         for odin in (False, True):
             runs = []
+            method_scores = []
             for seed in SEEDS:
                 trained = train_head(train_x, train_lengths, kind, seed, odin, args.epochs,
                                      args.learning_rate, args.lambda_length,
                                      args.lambda_orthogonal, args.batch_size)
                 quality_scores = test_x @ trained["quality"]
+                method_scores.append(quality_scores)
                 metrics, per_group = group_metrics(quality_scores, test_lengths)
                 run = {"seed": seed, "metrics": metrics,
                        "top1_ci_95": bootstrap_ci(per_group["top1"], seed),
@@ -300,18 +379,27 @@ def main() -> None:
                                                (np.linalg.norm(trained["quality"]) * np.linalg.norm(trained["length"]) + 1e-12))
                 runs.append(run)
             methods.append({"loss": kind, "odin": odin, "runs": runs, "summary": summarize_runs(runs)})
+            score_runs[(kind, odin)] = method_scores
             print(kind, "ODIN" if odin else "single", methods[-1]["summary"]["top1_accuracy"])
 
+    bt_scores = np.mean(score_runs[("pairwise_bt", False)], axis=0)
+    full_pl_scores = np.mean(score_runs[("full_pl", False)], axis=0)
+    paired_comparison = paired_bootstrap_comparison(bt_scores, full_pl_scores, test_lengths)
+
+    best_is_longest = np.argmax(test_lengths, axis=1) == 0
     result = {
         "data": {"dataset": "berkeley-nest/Nectar", "candidates_per_prompt": 7,
                  "label_source": "GPT-4 ranking", "train_n": len(splits["train"]),
-                 "validation_n": len(splits["validation"]), "test_n": len(splits["test"])},
+                 "validation_n": len(splits["validation"]), "test_n": len(splits["test"]),
+                 "best_is_longest_rate": float(best_is_longest.mean()),
+                 "best_is_longest_ci_95": wilson_interval(int(best_is_longest.sum()), len(best_is_longest))},
         "model": {"name": args.model, "embedding_dimension": model.get_sentence_embedding_dimension(),
                   "encoder_frozen": True, "max_sequence_length": model.max_seq_length},
         "training": {"losses": list(LOSSES), "seeds": list(SEEDS), "epochs": args.epochs,
                      "learning_rate": args.learning_rate, "lambda_length": args.lambda_length,
                      "lambda_orthogonal": args.lambda_orthogonal},
         "methods": methods,
+        "paired_comparison_bt_vs_full_pl": paired_comparison,
         "runtime_seconds": time.perf_counter() - start,
     }
     args.out.mkdir(parents=True, exist_ok=True)
